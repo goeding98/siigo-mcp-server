@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "siigo": {
+      "type": "sse",
+      "url": "https://siigo-mcp-server.onrender.com/mcp",
+      "env": {
+        "SIIGO_USERNAME": "gerencia@dogspital.com",
+        "SIIGO_ACCESS_KEY": "Mzc4ZTY0YjgtNmIzYS00NjNlLWI2MDEtNWJhMzJkOWM3OWViOjl3OF9PNDFndUs=",
+        "SIIGO_PARTNER_ID": "ClaudeAgent"
+      },
+      "tools": [
+        "get_invoices",
+        "get_revenue_by_service",
+        "get_cash_flow_snapshot",
+        "get_financial_snapshot",
+        "get_top_customers",
+        "clear_cache"
+      ]
+    }
+  }
+}
