@@ -1,105 +1,105 @@
 # financial-snapshot-siigo
 
-Obtén el snapshot financiero MTD/YTD de Siigo API con ingresos, margen y crecimiento.
-
-## Instrucciones
-
-Ejecuta los siguientes pasos en orden:
-
-### 1. Autenticar con Siigo
+Ejecuta el siguiente script Python con bash y muestra el output tal como sale. No lo modifiques.
 
 ```bash
-SIIGO_TOKEN=$(curl -s -X POST "https://api.siigo.com/auth" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\": \"${SIIGO_USERNAME}\", \"access_key\": \"${SIIGO_ACCESS_KEY}\"}" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
-echo "Token obtenido: ${SIIGO_TOKEN:0:20}..."
-```
+python3 << 'PYEOF'
+import os, json, urllib.request, urllib.error
+from datetime import date, datetime
 
-### 2. Obtener facturas del mes actual (MTD)
+username   = os.environ.get("SIIGO_USERNAME", "")
+access_key = os.environ.get("SIIGO_ACCESS_KEY", "")
+partner_id = os.environ.get("SIIGO_PARTNER_ID", "ClaudeAgent")
 
-```bash
-MONTH_START=$(date +%Y-%m-01)
-TODAY=$(date +%Y-%m-%d)
+if not username or not access_key:
+    print("ERROR: Faltan SIIGO_USERNAME o SIIGO_ACCESS_KEY en el environment.")
+    exit(1)
 
-MTD_INVOICES=$(curl -s "https://api.siigo.com/v1/invoices?start_date=${MONTH_START}&end_date=${TODAY}&page_size=100" \
-  -H "Authorization: Bearer ${SIIGO_TOKEN}" \
-  -H "Partner-Id: ${SIIGO_PARTNER_ID:-ClaudeAgent}" \
-  -H "Content-Type: application/json")
-```
+def siigo_post(url, body):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())
 
-### 3. Obtener facturas del año (YTD)
+def siigo_get(url, token):
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Partner-Id": partner_id,
+        "Content-Type": "application/json"
+    })
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())
 
-```bash
-YEAR_START=$(date +%Y-01-01)
-
-YTD_INVOICES=$(curl -s "https://api.siigo.com/v1/invoices?start_date=${YEAR_START}&end_date=${TODAY}&page_size=100" \
-  -H "Authorization: Bearer ${SIIGO_TOKEN}" \
-  -H "Partner-Id: ${SIIGO_PARTNER_ID:-ClaudeAgent}" \
-  -H "Content-Type: application/json")
-```
-
-### 4. Obtener facturas del mes anterior (para crecimiento)
-
-```bash
-LAST_MONTH_START=$(date -d "$(date +%Y-%m-01) -1 month" +%Y-%m-%d 2>/dev/null || date -v-1m +%Y-%m-01)
-LAST_MONTH_END=$(date -d "$(date +%Y-%m-01) -1 day" +%Y-%m-%d 2>/dev/null || date -v-1d -v"$(date +%m)"m +%Y-%m-%d)
-
-LAST_MONTH_INVOICES=$(curl -s "https://api.siigo.com/v1/invoices?start_date=${LAST_MONTH_START}&end_date=${LAST_MONTH_END}&page_size=100" \
-  -H "Authorization: Bearer ${SIIGO_TOKEN}" \
-  -H "Partner-Id: ${SIIGO_PARTNER_ID:-ClaudeAgent}" \
-  -H "Content-Type: application/json")
-```
-
-### 5. Calcular y mostrar métricas
-
-Procesa los datos con Python para calcular:
-
-```bash
-python3 << 'EOF'
-import json, os, sys
-
-def sum_invoices(data):
-    invoices = json.loads(data) if isinstance(data, str) else data
-    items = invoices.get('results', invoices.get('data', []))
-    paid = [i for i in items if i.get('status') in ('Activo', 'PAID', 'Pagado', 'Active')]
-    return sum(float(i.get('total', 0)) for i in paid), len(paid)
-
-import subprocess
-
-mtd_raw = subprocess.getoutput('echo "$MTD_INVOICES"')
-ytd_raw = subprocess.getoutput('echo "$YTD_INVOICES"')
-lm_raw = subprocess.getoutput('echo "$LAST_MONTH_INVOICES"')
+def sum_paid(invoices):
+    total = 0
+    count = 0
+    for inv in invoices:
+        st = str(inv.get("status", "")).lower()
+        if any(x in st for x in ["activo", "active", "paid", "pagado", "emitida"]):
+            total += float(inv.get("total", 0))
+            count += 1
+    return total, count
 
 try:
-    mtd_rev, mtd_count = sum_invoices(mtd_raw)
-    ytd_rev, ytd_count = sum_invoices(ytd_raw)
-    lm_rev, lm_count = sum_invoices(lm_raw)
-
-    growth = round(((mtd_rev - lm_rev) / lm_rev * 100), 1) if lm_rev > 0 else 0
-
-    print("=" * 50)
-    print("  SNAPSHOT FINANCIERO - Dogspital")
-    print("=" * 50)
-    print(f"  MTD Ingresos:     ${mtd_rev:>12,.0f} COP  ({mtd_count} facturas)")
-    print(f"  YTD Ingresos:     ${ytd_rev:>12,.0f} COP  ({ytd_count} facturas)")
-    print(f"  Mes anterior:     ${lm_rev:>12,.0f} COP  ({lm_count} facturas)")
-    print(f"  Crecimiento MTD:  {growth:>+.1f}%")
-    print("=" * 50)
+    auth = siigo_post("https://api.siigo.com/auth", {"username": username, "access_key": access_key})
+    token = auth["access_token"]
 except Exception as e:
-    print(f"Error procesando datos: {e}")
-    print("MTD raw:", mtd_raw[:200])
-EOF
+    print(f"ERROR autenticando con Siigo: {e}")
+    exit(1)
+
+today = date.today()
+month_start = today.replace(day=1).isoformat()
+year_start  = today.replace(month=1, day=1).isoformat()
+today_str   = today.isoformat()
+
+if today.month == 1:
+    lm_start = today.replace(year=today.year-1, month=12, day=1).isoformat()
+    lm_end   = today.replace(year=today.year-1, month=12, day=31).isoformat()
+else:
+    import calendar
+    lm_start = today.replace(month=today.month-1, day=1).isoformat()
+    lm_last  = calendar.monthrange(today.year, today.month-1)[1]
+    lm_end   = today.replace(month=today.month-1, day=lm_last).isoformat()
+
+def fetch_invoices(start, end):
+    url = f"https://api.siigo.com/v1/invoices?start_date={start}&end_date={end}&page_size=100"
+    try:
+        resp = siigo_get(url, token)
+        return resp.get("results", resp.get("data", []))
+    except Exception as e:
+        print(f"  (advertencia: {e})")
+        return []
+
+mtd_inv  = fetch_invoices(month_start, today_str)
+ytd_inv  = fetch_invoices(year_start, today_str)
+lm_inv   = fetch_invoices(lm_start, lm_end)
+
+mtd_rev, mtd_n = sum_paid(mtd_inv)
+ytd_rev, ytd_n = sum_paid(ytd_inv)
+lm_rev,  lm_n  = sum_paid(lm_inv)
+
+growth = round((mtd_rev - lm_rev) / lm_rev * 100, 1) if lm_rev > 0 else 0
+growth_sign = "+" if growth >= 0 else ""
+
+print("## Snapshot Financiero — Dogspital")
+print(f"_Generado: {today_str}_\n")
+print("| Métrica | Valor | Facturas |")
+print("|---|---|---|")
+print(f"| **MTD Ingresos** | ${mtd_rev:,.0f} COP | {mtd_n} |")
+print(f"| **YTD Ingresos** | ${ytd_rev:,.0f} COP | {ytd_n} |")
+print(f"| Mes anterior | ${lm_rev:,.0f} COP | {lm_n} |")
+print(f"| **Crecimiento MTD** | {growth_sign}{growth}% | — |")
+print()
+
+if mtd_inv:
+    print("### Top facturas del mes")
+    print("| Fecha | Cliente | Total |")
+    print("|---|---|---|")
+    sorted_inv = sorted(mtd_inv, key=lambda x: float(x.get("total",0)), reverse=True)[:5]
+    for inv in sorted_inv:
+        cliente = inv.get("customer", {}).get("name", inv.get("customer_name", "—"))
+        fecha   = inv.get("date", inv.get("invoice_date", "—"))[:10]
+        total   = float(inv.get("total", 0))
+        print(f"| {fecha} | {cliente} | ${total:,.0f} |")
+PYEOF
 ```
-
-## Variables de entorno requeridas
-
-- `SIIGO_USERNAME` — Usuario API de Siigo (ej: gerencia@dogspital.com)
-- `SIIGO_ACCESS_KEY` — Access key de Siigo
-- `SIIGO_PARTNER_ID` — Partner-ID de la app (default: ClaudeAgent)
-
-## Rango de fechas por defecto
-
-- MTD: Primer día del mes actual → hoy
-- YTD: 1 enero del año actual → hoy
-- Crecimiento: comparado con el mes anterior completo
